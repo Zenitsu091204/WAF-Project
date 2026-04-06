@@ -1,0 +1,13 @@
+# --- MISP Connection ---
+MISP_URL=https://10.0.2.15:8443
+MISP_KEY=Api key Here
+MISP_VERIFYCERT=False
+
+# --- Log File Paths ---
+ERROR_LOG_PATH=/usr/local/nginx/logs/error.log
+ACCESS_LOG_PATH=/usr/local/nginx/logs/access.log
+
+# --- OpenCTI Integration ---
+OPENCTI_TAG=opencti
+INGEST_EXTENSIVE=True
+

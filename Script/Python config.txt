@@ -1,0 +1,16 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=BASE_DIR / '.env')
+
+MISP_URL = os.getenv("MISP_URL", "").strip().rstrip('/')
+MISP_KEY = os.getenv("MISP_KEY", "").strip()
+ERROR_LOG_PATH = os.getenv("ERROR_LOG_PATH", "/usr/local/nginx/logs/error.log")
+ACCESS_LOG_PATH = os.getenv("ACCESS_LOG_PATH", "/usr/local/nginx/logs/access.log")
+
+MISP_VERIFYCERT = os.getenv("MISP_VERIFYCERT", "False").lower() == "true"
+OPENCTI_TAG = os.getenv("OPENCTI_TAG", "opencti")
+INGEST_EXTENSIVE = os.getenv("INGEST_EXTENSIVE", "True").lower() == "true"
+

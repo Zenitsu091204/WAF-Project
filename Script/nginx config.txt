@@ -1,0 +1,61 @@
+user zenvm zenvm;
+worker_processes auto;
+pid /usr/local/nginx/logs/nginx.pid;
+error_log /usr/local/nginx/logs/error.log info;
+
+events {
+    worker_connections 4096;
+}
+
+http {
+    include mime.types;
+    default_type application/octet-stream;
+
+    log_format cti_format '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
+    access_log /usr/local/nginx/logs/access.log cti_format;
+
+    # LOAD MODIFIED CORE RULES
+    include /usr/local/nginx/conf/naxsi_core.rules;
+
+    server {
+        listen 443 ssl;
+        server_name 10.0.2.15;
+
+        ssl_certificate /etc/nginx/ssl/waf.crt;
+        ssl_certificate_key /etc/nginx/ssl/waf.key;
+
+        # GLOBAL NAXSI SETTINGS (Inside Server Block)
+        set $naxsi_flag_learning 0; 
+        set $naxsi_extensive_log 1; 
+
+        location / {
+            SecRulesEnabled;
+            DeniedUrl "/RequestDenied";
+
+            # AGGRESSIVE THRESHOLDS: Block immediately on Hard Rule match
+            CheckRule "$SQL >= 2" BLOCK;
+            CheckRule "$XSS >= 2" BLOCK;
+            CheckRule "$RCE >= 2" BLOCK;
+            CheckRule "$TRAVERSAL >= 2" BLOCK;
+            CheckRule "$EVADE >= 2" BLOCK;
+
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        location = /RequestDenied {
+            internal;
+            return 403 "Blocked by NAXSI: Cyber Threat Intelligence Pipeline Active\n";
+        }
+    }
+
+    # HTTP Redirect
+    server {
+        listen 80;
+        server_name 10.0.2.15;
+        return 301 https://$host$request_uri;
+    }
+}
+

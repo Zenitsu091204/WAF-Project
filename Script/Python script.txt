@@ -1,0 +1,151 @@
+import time, re, threading, queue, urllib3, urllib.parse
+from pymisp import PyMISP, MISPEvent
+from config import (
+    MISP_URL, MISP_KEY, MISP_VERIFYCERT,
+    ERROR_LOG_PATH, ACCESS_LOG_PATH,
+    OPENCTI_TAG, INGEST_EXTENSIVE
+)
+
+# --- CONFIGURATION ---
+JUICESHOP_LOG_PATH = "/home/zenvm/juice-shop/logs/access.log.2026-04-02"
+JUICESHOP_APP_LOG_PATH = "/home/zenvm/juice-shop/juice-shop.log"
+BASE_URL = "http://10.0.2.15"  
+
+# Suppress SSL Warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+task_queue = queue.Queue()
+
+def misp_worker():
+    try:
+        misp = PyMISP(MISP_URL, MISP_KEY, ssl=MISP_VERIFYCERT)
+        print(f"[*] Connected to MISP: {MISP_URL}")
+    except Exception as e:
+        print(f"[-] MISP Connection Error: {e}"); return
+
+    while True:
+        data = task_queue.get()
+        if data is None: break
+        log_type, ip, detail, line, tags = data
+
+        try:
+            formatted_url = f"{BASE_URL}{detail}" if detail.startswith('/') else detail
+            
+            event = MISPEvent()
+            event.info = f"{log_type} Incident | Source: {ip}"
+            
+            # --- 1. CORE OPENCTI TAGGING ---
+            event.add_tag(OPENCTI_TAG) 
+            event.add_tag("tlp:white")
+            event.add_tag("verdict:malicious")
+
+            # --- 2. THREAT LEVEL MAPPING ---
+            if log_type in ["PAYLOAD", "JUICESHOP_ATTACK", "APP_CRASH"]:
+                event.threat_level_id = 1  # High
+            elif log_type == "BLOCK":
+                event.threat_level_id = 2  # Medium
+            else:
+                event.threat_level_id = 3  # Low
+
+            # --- 3. UPDATED ENTITY MAPPING (FOR MALWARE/THREATS) ---
+            if log_type == "PAYLOAD":
+                event.add_attribute('payload-delivery', value=detail, to_ids=True)
+                # REQUIRED FOR OPENCTI MALWARE TAB:
+                event.add_tag('misp-galaxy:malware="Web Injection Script"')
+                event.add_tag('opencti:type="Malware"')
+                event.add_tag('misp-galaxy:mitre-attack-pattern="Command and Scripting Interpreter - T1059"')
+            
+            elif log_type == "BLOCK":
+                event.add_attribute('ip-src', value=ip, to_ids=True)
+                event.add_attribute('url', value=formatted_url, to_ids=True)
+                # REQUIRED FOR OPENCTI TOOLS TAB:
+                event.add_tag('misp-galaxy:mitre-tool="WAF Block Tool"')
+                event.add_tag('opencti:type="Tool"')
+
+            elif log_type == "RECON":
+                event.add_attribute('ip-src', value=ip, to_ids=True)
+                event.add_tag('misp-galaxy:mitre-attack-pattern="Active Scanning - T1595"')
+
+            elif log_type == "JUICESHOP_ATTACK":
+                event.add_attribute('ip-src', value=ip, to_ids=True)
+                event.add_attribute('url', value=formatted_url, to_ids=True)
+                # REQUIRED FOR OPENCTI THREAT ACTOR TAB:
+                event.add_tag('misp-galaxy:threat-actor="Juice Shop Attacker"')
+                event.add_tag('opencti:type="Threat-Actor"')
+
+            elif log_type == "APP_CRASH":
+                event.add_attribute('comment', value=f"Node.js Crash: {detail}", to_ids=False)
+                event.add_tag('type:software-vulnerability')
+
+            # --- 4. DYNAMIC MITRE MAPPING ---
+            for t in tags:
+                if "SQL" in t.upper() or "SELECT" in detail.upper(): 
+                    event.add_tag('misp-galaxy:mitre-attack-pattern="SQL Injection - T1190"')
+                if "XSS" in t.upper() or "<SCRIPT>" in detail.upper(): 
+                    event.add_tag('misp-galaxy:mitre-attack-pattern="Cross-Site Scripting - T1059.007"')
+
+            # --- SYNC LOGIC ---
+            new_event = misp.add_event(event, pythonify=True)
+            misp.publish(new_event)
+            print(f"[+] SUCCESS: Synced {log_type} from {ip}")
+            
+        except Exception as e: 
+            print(f"[-] Sync failed: {e}")
+        finally: 
+            task_queue.task_done()
+
+def tail_logs(path, mode):
+    FMT_RGX = re.compile(r"NAXSI_FMT: ip=(?P<ip>[^&]+).*?uri=(?P<uri>[^& ]+)")
+    EXL_RGX = re.compile(r"NAXSI_EXLOG: ip=(?P<ip>[^&]+).*?data=(?P<data>[^& ]+)")
+    ACC_RGX = re.compile(r'(?P<ip>\d+\.\d+\.\d+\.\d+) - (?P<user>.*?) \[(?P<time>.*?)\] "(?P<request>.*?)" (?P<status>\d+)')
+    JS_RGX = re.compile(r'(?P<ip>[^ ]+) - - \[.*?\] "(?P<method>\w+) (?P<uri>.*?) HTTP/.*?" (?P<status>\d+)')
+    STACK_START_RGX = re.compile(r"^(?P<err_type>\w+Error): (?P<msg>.*)")
+
+    try:
+        with open(path, "r") as f:
+            f.seek(0, 2)
+            while True:
+                line = f.readline()
+                if not line: 
+                    time.sleep(0.1); continue
+                
+                parsed_data = None
+                if mode == "ERROR":
+                    if "NAXSI_FMT" in line:
+                        m = FMT_RGX.search(line)
+                        if m: parsed_data = ("BLOCK", m.group('ip'), m.group('uri'), line, ["BLOCK"])
+                    elif "NAXSI_EXLOG" in line:
+                        m = EXL_RGX.search(line)
+                        if m: parsed_data = ("PAYLOAD", m.group('ip'), m.group('data'), line, ["MALICIOUS"])
+                elif mode == "ACCESS":
+                    m = ACC_RGX.search(line)
+                    if m: parsed_data = ("RECON", m.group('ip'), m.group('request'), line, [m.group('status')])
+                elif mode == "JUICESHOP":
+                    m = JS_RGX.search(line)
+                    if m:
+                        uri = m.group('uri')
+                        is_attack = any(p in uri.lower() for p in ["'", "--", "1=1", "<script>", "admin", "score-board"])
+                        label = "JUICESHOP_ATTACK" if is_attack else "RECON"
+                        parsed_data = (label, m.group('ip'), uri, line, [m.group('status')])
+                elif mode == "APP_INTERNAL":
+                    m = STACK_START_RGX.search(line)
+                    if m:
+                        parsed_data = ("APP_CRASH", "INTERNAL_SERVER", f"{m.group('err_type')}: {m.group('msg')}", line, ["CRITICAL"])
+
+                if parsed_data:
+                    task_queue.put(parsed_data)
+    except Exception as e: 
+        print(f"[-] Log Error ({mode}): {e}")
+
+if __name__ == "__main__":
+    threading.Thread(target=misp_worker, daemon=True).start()
+    threading.Thread(target=tail_logs, args=(ERROR_LOG_PATH, "ERROR"), daemon=True).start()
+    threading.Thread(target=tail_logs, args=(ACCESS_LOG_PATH, "ACCESS"), daemon=True).start()
+    threading.Thread(target=tail_logs, args=(JUICESHOP_LOG_PATH, "JUICESHOP"), daemon=True).start()
+    threading.Thread(target=tail_logs, args=(JUICESHOP_APP_LOG_PATH, "APP_INTERNAL"), daemon=True).start()
+    
+    print(f"[*] Pipeline Active. Monitoring all sources with Galaxy mapping...")
+    try:
+        while True: time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[*] Shutting down...")
+

@@ -1,0 +1,86 @@
+########################################
+# NAXSI CORE RULES (Internal & Libinjection)
+########################################
+MainRule "msg:weird request" id:1;
+MainRule "msg:invalid hex" id:10;
+MainRule "msg:invalid POST" id:13;
+
+# Libinjection for SQLi/XSS (applied to all relevant zones)
+MainRule "msg:libinjection_sql" "mz:BODY|URL|ARGS|$HEADERS_VAR:Cookie" "s:$SQL:8" id:17;
+MainRule "msg:libinjection_xss" "mz:BODY|URL|ARGS|$HEADERS_VAR:Cookie" "s:$XSS:8" id:18;
+
+########################################
+# SQL & NoSQL INJECTION (IDs: 1000-2104)
+########################################
+# Basic SQLi patterns
+MainRule "str:select" "msg:SQL select" "mz:BODY|URL|ARGS|$HEADERS_VAR:Cookie" "s:$SQL:8" id:1000;
+MainRule "str:union" "msg:SQL union" "mz:BODY|URL|ARGS|$HEADERS_VAR:Cookie" "s:$SQL:8" id:1001;
+MainRule "str:--" "msg:SQL comment" "mz:BODY|URL|ARGS|$HEADERS_VAR:Cookie" "s:$SQL:8" id:1021;
+MainRule "str:'" "msg:Single quote" "mz:ARGS|BODY|URL|$HEADERS_VAR:Cookie" "s:$SQL:8,$XSS:8" id:1026;
+
+# Hard SQLi OR (using str: for literal matching)
+MainRule "str:or 1=1" "msg:Hard SQLi OR" "mz:BODY|URL|ARGS" "s:$SQL:8" id:2100;
+MainRule "str:or 2=2" "msg:Hard SQLi OR" "mz:BODY|URL|ARGS" "s:$SQL:8" id:2101;
+MainRule "str:or 'a'='a" "msg:Hard SQLi OR" "mz:BODY|URL|ARGS" "s:$SQL:8" id:2102;
+MainRule "str:or 1=2" "msg:Hard SQLi OR" "mz:BODY|URL|ARGS" "s:$SQL:8" id:2103;
+
+# Hard SQLi Union
+MainRule "str:union select" "msg:Hard SQLi Union" "mz:BODY|URL|ARGS" "s:$SQL:8" id:2104;
+
+# NoSQLi (MongoDB/Node.js)
+MainRule "str:[$]gt" "msg:NoSQL operator gt" "mz:BODY|ARGS" "s:$SQL:8" id:2105;
+MainRule "str:[$]ne" "msg:NoSQL operator ne" "mz:BODY|ARGS" "s:$SQL:8" id:2106;
+MainRule "str:[$]where" "msg:NoSQL operator where" "mz:BODY|ARGS" "s:$SQL:8" id:2107;
+
+########################################
+# XSS & PAYLOADS (IDs: 1300-2205)
+########################################
+# Basic HTML tags
+MainRule "str:<" "msg:HTML open" "mz:ARGS|URL|BODY|$HEADERS_VAR:Cookie" "s:$XSS:8" id:1302;
+MainRule "str:>" "msg:HTML close" "mz:ARGS|URL|BODY|$HEADERS_VAR:Cookie" "s:$XSS:8" id:1303;
+
+# Hard XSS: Event handlers, alert(), eval()
+MainRule "str:onerror=" "msg:XSS Event Handler" "mz:BODY|URL|ARGS" "s:$XSS:8" id:2200;
+MainRule "str:onload=" "msg:XSS Event Handler" "mz:BODY|URL|ARGS" "s:$XSS:8" id:2201;
+MainRule "str:alert(" "msg:XSS Alert" "mz:BODY|URL|ARGS" "s:$XSS:8" id:2202;
+MainRule "str:eval(" "msg:XSS Eval" "mz:BODY|URL|ARGS" "s:$XSS:8" id:2203;
+
+# Iframe and src= attribute rules
+MainRule "str:<iframe" "msg:XSS Iframe Injection" "mz:ARGS|URL|BODY|$HEADERS_VAR:Cookie" "s:$XSS:8" id:2204;
+MainRule "str:src=" "msg:XSS Src Attribute" "mz:ARGS|URL|BODY|$HEADERS_VAR:Cookie" "s:$XSS:8" id:2205;
+
+########################################
+# RCE & SSTI (IDs: 2300-2304)
+########################################
+# Server-Side Template Injection (SSTI)
+MainRule "str:{{" "msg:SSTI Template" "mz:BODY|URL|ARGS" "s:$RCE:8" id:2300;
+MainRule "str:${" "msg:SSTI Variable" "mz:BODY|URL|ARGS" "s:$RCE:8" id:2301;
+
+# Remote Code Execution (RCE)
+MainRule "str:/bin/bash" "msg:RCE Bash" "mz:BODY|URL|ARGS" "s:$RCE:8" id:2302;
+MainRule "str:curl" "msg:RCE Tool Curl" "mz:BODY|URL|ARGS" "s:$RCE:8" id:2303;
+MainRule "str:|" "msg:RCE Pipe" "mz:BODY|URL|ARGS" "s:$RCE:8" id:2304;
+
+########################################
+# TRAVERSAL & EVASION (IDs: 1200-2402)
+########################################
+# Directory traversal
+MainRule "str:.." "msg:Double dot" "mz:ARGS|URL|BODY" "s:$TRAVERSAL:8" id:1200;
+MainRule "str:/etc/passwd" "msg:Passwd access" "mz:ARGS|URL|BODY" "s:$TRAVERSAL:8" id:1201;
+
+# Evasion techniques
+MainRule "str:&#" "msg:EVADE HTML Entity" "mz:ARGS|BODY|URL" "s:$EVADE:8" id:2400;
+MainRule "str:%U" "msg:EVADE Unicode" "mz:ARGS|BODY|URL" "s:$EVADE:8" id:2401;
+MainRule "str:..%2f" "msg:EVADE Traversal" "mz:ARGS|URL|BODY" "s:$TRAVERSAL:8" id:2402;
+
+########################################
+# WHITELIST RULES (IDs: 10000-19999)
+########################################
+# Example: Allow specific <div> tags for a rich-text editor
+# BasicRule "str:<div" "mz:ARGS|BODY" "s:$XSS:0" id:10000;
+
+########################################
+# CUSTOM RULES (IDs: 20000-29999)
+########################################
+# Example: Block Juice Shop's admin bypass attempts
+# MainRule "str:admin" "msg:Admin Access Attempt" "mz:URL" "s:$RCE:8" id:20000;

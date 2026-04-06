@@ -1,0 +1,161 @@
+services:
+  # --- INFRASTRUCTURE ---
+  redis:
+    image: redis:7.4-alpine
+    restart: always
+    volumes: [redisdata:/data]
+    environment: [TZ=Asia/Kolkata]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.16.2
+    restart: always
+    volumes: [esdata:/usr/share/elasticsearch/data]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ingest.geoip.downloader.enabled=false
+      - "ES_JAVA_OPTS=-Xms${ELASTIC_MEMORY_SIZE} -Xmx${ELASTIC_MEMORY_SIZE}"
+      - TZ=Asia/Kolkata
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes: [miniodata:/data]
+
+  rabbitmq:
+    image: rabbitmq:4.0-management
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes: [rabbitmqdata:/var/lib/rabbitmq]
+
+  # --- OPENCTI CORE ---
+  opencti:
+    image: opencti/platform:6.4.2
+    restart: always
+    ports: ["9091:8080"]
+    depends_on: [redis, elasticsearch, minio, rabbitmq]
+    environment:
+      - TZ=Asia/Kolkata
+      - APP__PORT=8080
+      - APP__BASE_URL=http://${OPENCTI_HOST}:9091
+      - APP__ADMIN__TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - APP__ADMIN__EMAIL=${OPENCTI_ADMIN_EMAIL}
+      - APP__ADMIN__PASSWORD=${OPENCTI_ADMIN_PASSWORD}
+      - APP__ENCRYPTION_KEY=${OPENCTI_ENCRYPTION_KEY}
+      - REDIS__HOSTNAME=redis
+      - REDIS__PORT=6379
+      - ELASTICSEARCH__URL=http://elasticsearch:9200
+      - MINIO__ENDPOINT=minio
+      - MINIO__PORT=9000
+      - MINIO__USE_SSL=false
+      - MINIO__ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO__SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - RABBITMQ__HOSTNAME=rabbitmq
+      - RABBITMQ__PORT=5672
+      - RABBITMQ__USERNAME=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ__PASSWORD=${RABBITMQ_DEFAULT_PASS}
+      - PROVIDERS__LOCAL__STRATEGY=LocalStrategy
+
+  worker:
+    image: opencti/worker:6.4.2
+    restart: always
+    depends_on: [opencti]
+    environment:
+      - TZ=Asia/Kolkata
+      - OPENCTI_URL=http://opencti:8080
+      - OPENCTI_TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - WORKER_LOG_LEVEL=info
+
+  # --- DATA IMPORT CONNECTORS ---
+  connector-misp:
+    image: opencti/connector-misp:6.4.2
+    restart: always
+    depends_on: [opencti]
+    environment:
+      - TZ=Asia/Kolkata
+      - OPENCTI_URL=http://opencti:8080
+      - OPENCTI_TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - CONNECTOR_ID=${CONNECTOR_ID}
+      - CONNECTOR_TYPE=EXTERNAL_IMPORT
+      - CONNECTOR_NAME=MISP_NAXSI
+      - CONNECTOR_SCOPE=${CONNECTOR_SCOPE}
+      - MISP_URL=${MISP_URL}
+      - MISP_KEY=${MISP_API_KEY}
+      - MISP_SSL_VERIFY=${MISP_SSL_VERIFY}
+      - MISP_INTERVAL=${MISP_INTERVAL}
+      - MISP_IMPORT_TAGS=${MISP_IMPORT_TAGS}
+      - MISP_CREATE_REPORTS=${MISP_CREATE_REPORTS}
+      - MISP_CREATE_INDICATORS=${MISP_CREATE_INDICATORS}
+      - MISP_CREATE_OBSERVABLES=${MISP_CREATE_OBSERVABLES}
+      - MISP_CREATE_SIGHTINGS=${MISP_CREATE_SIGHTINGS}
+      - MISP_GUESS_THREAT_FROM_TAGS=${MISP_GUESS_THREAT_FROM_TAGS}
+      - MISP_IMPORT_ONLY_PUBLISHED=${MISP_IMPORT_ONLY_PUBLISHED}
+      - MISP_IMPORT_WITH_ATTRIBUTES=${MISP_IMPORT_WITH_ATTRIBUTES}
+      - MISP_IMPORT_ALL_ATTRIBUTES=${MISP_IMPORT_ALL_ATTRIBUTES}
+      - MISP_CREATE_OBJECTS=${MISP_CREATE_OBJECTS}
+      - MISP_CREATE_GROUPINGS=${MISP_CREATE_GROUPINGS}
+      - MISP_CREATE_TAGS_AS_LABELS=${MISP_CREATE_TAGS_AS_LABELS}
+      - MISP_MARKINGS_FROM_TAGS=${MISP_MARKINGS_FROM_TAGS}
+      - MISP_CREATE_EXTERNAL_REFERENCES=${MISP_CREATE_EXTERNAL_REFERENCES}
+      - MISP_IMPORT_TAGS_AS_LABELS=${MISP_IMPORT_TAGS_AS_LABELS}
+
+  # --- ENRICHMENT CONNECTORS ---
+  connector-abuseipdb:
+    image: opencti/connector-abuseipdb:6.4.2
+    restart: always
+    depends_on: [opencti]
+    environment:
+      - TZ=Asia/Kolkata
+      - OPENCTI_URL=http://opencti:8080
+      - OPENCTI_TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - CONNECTOR_ID=${CONNECTOR_ABUSEIPDB_ID}
+      - CONNECTOR_TYPE=INTERNAL_ENRICHMENT
+      - CONNECTOR_NAME=AbuseIPDB_Enrichment
+      - CONNECTOR_SCOPE=IPv4-Addr,IPv6-Addr
+      - CONNECTOR_AUTO=${ABUSEIPDB_AUTO}
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
+      - ABUSEIPDB_MAX_TLP=${ABUSEIPDB_MAX_TLP}
+
+  connector-virustotal:
+    image: opencti/connector-virustotal:6.4.2
+    restart: always
+    depends_on: [opencti]
+    environment:
+      - TZ=Asia/Kolkata
+      - OPENCTI_URL=http://opencti:8080
+      - OPENCTI_TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - CONNECTOR_ID=${CONNECTOR_VIRUSTOTAL_ID}
+      - CONNECTOR_TYPE=INTERNAL_ENRICHMENT
+      - CONNECTOR_NAME=VirusTotal_Enrichment
+      - CONNECTOR_SCOPE=StixFile,Artifact,IPv4-Addr,Domain-Name,Url
+      - CONNECTOR_AUTO=${VIRUSTOTAL_AUTO}
+      - VIRUSTOTAL_TOKEN=${VIRUSTOTAL_TOKEN}
+      - VIRUSTOTAL_MAX_TLP=${VIRUSTOTAL_MAX_TLP}
+
+  connector-hybrid-analysis:
+    image: opencti/connector-hybrid-analysis-sandbox:6.4.2
+    restart: always
+    depends_on: [opencti]
+    environment:
+      - TZ=Asia/Kolkata
+      - OPENCTI_URL=http://opencti:8080
+      - OPENCTI_TOKEN=${OPENCTI_ADMIN_TOKEN}
+      - CONNECTOR_ID=${CONNECTOR_HYBRID_ANALYSIS_ID}
+      - CONNECTOR_TYPE=INTERNAL_ENRICHMENT
+      - CONNECTOR_NAME=Hybrid_Analysis_Enrichment
+      - CONNECTOR_SCOPE=StixFile,Artifact,Url
+      - CONNECTOR_AUTO=${HYBRID_ANALYSIS_AUTO}
+      - HYBRID_ANALYSIS_API_KEY=${HYBRID_ANALYSIS_API_KEY}
+
+volumes:
+  esdata:
+  redisdata:
+  miniodata:
+  rabbitmqdata:
+

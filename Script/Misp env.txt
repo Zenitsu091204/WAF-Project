@@ -1,0 +1,47 @@
+##
+# Build-time variables
+##
+CORE_TAG=v2.5.34
+MODULES_TAG=v3.0.6
+GUARD_TAG=v1.2
+PHP_VER=20240924
+
+##
+# Identity & Security
+##
+ADMIN_EMAIL=admin@admin.test
+ADMIN_ORG=zenmisp
+ADMIN_PASSWORD=admin
+ENCRYPTION_KEY=O/ZpOjV4NtTSsRk4wrISVc2VZ1HOI190ONLhxEJWbhw=
+SALT=d25hC6ng5ZXcNh+RXfYuQlkd8n3i96gpLJ2tZSXRsM4=
+
+##
+# Network Settings (CRITICAL: Match your 8443 mapping)
+##
+BASE_URL=https://10.0.2.15:8443
+DISABLE_SSL_REDIRECT=true
+DISABLE_IPV6=true
+ENABLE_DB_SETTINGS=true
+
+##
+# Database (MariaDB) Settings
+##
+MYSQL_HOST=db
+MYSQL_DATABASE=misp
+MYSQL_USER=misp
+MYSQL_PASSWORD=adminmysql@123
+MYSQL_ROOT_PASSWORD=adminmysqlroot@123
+
+##
+# Redis / Valkey Settings
+##
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=adminredis@123
+
+##
+# Email Settings
+##
+SMTP_FQDN=mail
+GPG_PASSPHRASE=passphrase
+
